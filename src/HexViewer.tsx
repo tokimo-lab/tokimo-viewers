@@ -9,66 +9,33 @@
 
 import { Spin } from "@tokimo/ui";
 import { ChevronLeft, ChevronRight, SkipBack, SkipForward } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-const BYTES_PER_ROW = 16;
-/** Rows per page — 64 rows × 16 bytes = 1024 bytes per page. */
-const ROWS_PER_PAGE = 64;
-const PAGE_SIZE = ROWS_PER_PAGE * BYTES_PER_ROW; // 1 KB
-
-type ByteTone =
-  | "default"
-  | "zero"
-  | "ff"
-  | "printable"
-  | "control"
-  | "high"
-  | "string"
-  | "zero-run"
-  | "ff-run"
-  | "magic";
-
-interface MagicSignature {
-  label: string;
-  bytes: number[];
-}
-
-interface RowCell {
-  localOffset: number;
-  byte: number | null;
-  ascii: string;
-  tone: ByteTone;
-}
-
-const MAGIC_SIGNATURES: MagicSignature[] = [
-  { label: "PNG", bytes: [0x89, 0x50, 0x4e, 0x47] },
-  { label: "JPEG", bytes: [0xff, 0xd8, 0xff] },
-  { label: "GIF", bytes: [0x47, 0x49, 0x46, 0x38] },
-  { label: "WEBP", bytes: [0x52, 0x49, 0x46, 0x46] },
-  { label: "PDF", bytes: [0x25, 0x50, 0x44, 0x46] },
-  { label: "ZIP", bytes: [0x50, 0x4b, 0x03, 0x04] },
-  { label: "GZIP", bytes: [0x1f, 0x8b, 0x08] },
-  { label: "ELF", bytes: [0x7f, 0x45, 0x4c, 0x46] },
-  { label: "MZ/PE", bytes: [0x4d, 0x5a] },
-  { label: "SQLite", bytes: [0x53, 0x51, 0x4c, 0x69] },
-];
-
-/** Pre-built static column headers (0x00–0x0F). */
-const HEX_COLUMN_HEADERS = Array.from({ length: BYTES_PER_ROW }, (_, i) => (
-  <th
-    key={i.toString(16)}
-    className={`hex-cell hex-byte border-b border-border-base px-0.5 py-1 text-center ${i === 7 ? "pr-2" : ""}`}
-  >
-    {i.toString(16).toUpperCase().padStart(2, "0")}
-  </th>
-));
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  HEX_COLUMN_HEADERS,
+  HexRow,
+  LegendSwatch,
+  PagerButton,
+} from "./HexRow";
+import {
+  BYTES_PER_ROW,
+  formatByteCount,
+  PAGE_SIZE,
+  readFirstBytes,
+} from "./hex-viewer-helpers";
+import { hexViewerStyles } from "./hex-viewer-styles";
 
 export interface HexViewerProps {
   fileUrl: string;
   fileName: string;
+  /** Optional host-supplied range fetcher for auth/header glue. */
+  fetchRange?: (
+    fileUrl: string,
+    range: string,
+    signal?: AbortSignal,
+  ) => Promise<Response>;
 }
 
-export function HexViewer({ fileUrl, fileName }: HexViewerProps) {
+export function HexViewer({ fileUrl, fileName, fetchRange }: HexViewerProps) {
   const [page, setPage] = useState(0);
   const [pageData, setPageData] = useState<Uint8Array | null>(null);
   const [totalSize, setTotalSize] = useState<number | null>(null);
@@ -83,12 +50,11 @@ export function HexViewer({ fileUrl, fileName }: HexViewerProps) {
       if (!fileUrl) return null;
       const start = pageNum * PAGE_SIZE;
       const end = start + PAGE_SIZE - 1;
+      const range = `bytes=${start}-${end}`;
 
-      const resp = await fetch(fileUrl, {
-        credentials: "include",
-        headers: { Range: `bytes=${start}-${end}` },
-        signal,
-      });
+      const resp = fetchRange
+        ? await fetchRange(fileUrl, range, signal)
+        : await fetch(fileUrl, { headers: { Range: range }, signal });
 
       if (!resp.ok) {
         throw new Error(`HTTP ${resp.status}`);
@@ -113,7 +79,7 @@ export function HexViewer({ fileUrl, fileName }: HexViewerProps) {
 
       return new Uint8Array(await resp.arrayBuffer());
     },
-    [fileUrl],
+    [fileUrl, fetchRange],
   );
 
   useEffect(() => {
@@ -134,6 +100,7 @@ export function HexViewer({ fileUrl, fileName }: HexViewerProps) {
       })
       .catch((e) => {
         if (ac.signal.aborted) return;
+        console.error("[HexViewer] Failed to load page:", e);
         setError(String(e));
       })
       .finally(() => {
@@ -323,324 +290,3 @@ export function HexViewer({ fileUrl, fileName }: HexViewerProps) {
     </div>
   );
 }
-
-// ── Pagination button ──
-
-function PagerButton({
-  disabled,
-  onClick,
-  title,
-  children,
-}: {
-  disabled: boolean;
-  onClick: () => void;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      title={title}
-      className="rounded p-0.5 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-30 disabled:hover:bg-transparent"
-    >
-      {children}
-    </button>
-  );
-}
-
-// ── Hex row ──
-
-function HexRow({
-  offset,
-  bytes,
-  rowLength,
-}: {
-  offset: number;
-  bytes: Uint8Array;
-  rowLength: number;
-}) {
-  const analysis = useMemo(
-    () => analyzeRow(bytes, rowLength),
-    [bytes, rowLength],
-  );
-
-  return (
-    <tr
-      className={`hover:bg-[var(--bg-hover)] ${analysis.signature ? "bg-[color:color-mix(in_srgb,var(--accent)_6%,transparent)]" : ""}`}
-      title={
-        analysis.signature ? `Signature: ${analysis.signature}` : undefined
-      }
-    >
-      <td className="hex-cell hex-offset border-r border-border-base px-3 py-0.5">
-        <div className="flex items-center gap-2">
-          <span>{offset.toString(16).toUpperCase().padStart(8, "0")}</span>
-          {analysis.signature && (
-            <span className="rounded bg-[color:color-mix(in_srgb,var(--accent)_14%,transparent)] px-1 py-px text-[9px] font-medium uppercase tracking-wide text-[var(--accent)]">
-              {analysis.signature}
-            </span>
-          )}
-        </div>
-      </td>
-      {analysis.cells.map((cell, i) => (
-        <td
-          key={offset + cell.localOffset}
-          className={`hex-cell hex-byte px-0.5 py-0.5 text-center ${i === 7 ? "pr-2" : ""} ${getHexToneClass(cell.tone)}`}
-        >
-          {cell.byte === null
-            ? "  "
-            : cell.byte.toString(16).toUpperCase().padStart(2, "0")}
-        </td>
-      ))}
-      <td className="hex-cell hex-ascii border-l border-border-base px-3 py-0.5">
-        {analysis.cells.map((cell) => (
-          <span
-            key={`${offset}-ascii-${cell.localOffset}`}
-            className={getAsciiToneClass(cell.tone)}
-          >
-            {cell.ascii}
-          </span>
-        ))}
-      </td>
-    </tr>
-  );
-}
-
-function LegendSwatch({ label, tone }: { label: string; tone: ByteTone }) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      <span
-        className={`inline-block h-2 w-2 rounded-full ${getLegendToneClass(tone)}`}
-      />
-      <span>{label}</span>
-    </span>
-  );
-}
-
-// ── Helpers ──
-
-function analyzeRow(
-  bytes: Uint8Array,
-  rowLength: number,
-): { cells: RowCell[]; signature: string | null } {
-  const cells: RowCell[] = Array.from({ length: rowLength }, (_, i) => {
-    const byte = i < bytes.length ? bytes[i] : null;
-    if (byte === null) {
-      return { localOffset: i, byte: null, ascii: " ", tone: "default" };
-    }
-
-    return {
-      localOffset: i,
-      byte,
-      ascii: toAscii(byte),
-      tone: getBaseTone(byte),
-    };
-  });
-
-  let signature: string | null = null;
-
-  for (const sig of MAGIC_SIGNATURES) {
-    if (sig.bytes.length > bytes.length) continue;
-    let matched = true;
-    for (let i = 0; i < sig.bytes.length; i++) {
-      if (bytes[i] !== sig.bytes[i]) {
-        matched = false;
-        break;
-      }
-    }
-    if (matched) {
-      signature = sig.label;
-      for (let i = 0; i < sig.bytes.length; i++) {
-        cells[i].tone = "magic";
-      }
-      break;
-    }
-  }
-
-  paintRuns(cells, (byte) => byte === 0x00, 4, "zero-run");
-  paintRuns(cells, (byte) => byte === 0xff, 4, "ff-run");
-  paintRuns(cells, isPrintableAsciiByte, 4, "string");
-
-  return { cells, signature };
-}
-
-function paintRuns(
-  cells: RowCell[],
-  match: (byte: number) => boolean,
-  minLength: number,
-  tone: ByteTone,
-): void {
-  let start = -1;
-  for (let i = 0; i <= cells.length; i++) {
-    const byte = i < cells.length ? cells[i].byte : null;
-    const ok = byte !== null && match(byte);
-    if (ok && start === -1) {
-      start = i;
-      continue;
-    }
-    if (!ok && start !== -1) {
-      if (i - start >= minLength) {
-        for (let j = start; j < i; j++) {
-          cells[j].tone = tone;
-        }
-      }
-      start = -1;
-    }
-  }
-}
-
-function isPrintableAsciiByte(byte: number): boolean {
-  return byte >= 0x20 && byte <= 0x7e;
-}
-
-function toAscii(byte: number): string {
-  if (isPrintableAsciiByte(byte)) return String.fromCharCode(byte);
-  if (byte === 0x20) return " ";
-  return "·";
-}
-
-async function readFirstBytes(
-  resp: Response,
-  limit: number,
-): Promise<Uint8Array> {
-  if (!resp.body) {
-    return new Uint8Array(await resp.arrayBuffer()).slice(0, limit);
-  }
-
-  const reader = resp.body.getReader();
-  const out = new Uint8Array(limit);
-  let offset = 0;
-  let done = false;
-
-  while (offset < limit) {
-    const chunk = await reader.read();
-    if (chunk.done) {
-      done = true;
-      break;
-    }
-    const remaining = limit - offset;
-    const bytes = chunk.value.subarray(0, remaining);
-    out.set(bytes, offset);
-    offset += bytes.length;
-    if (chunk.value.length > remaining) break;
-  }
-
-  if (!done) {
-    await reader.cancel();
-  }
-
-  return out.slice(0, offset);
-}
-
-function getBaseTone(byte: number): ByteTone {
-  if (byte === 0x00) return "zero";
-  if (byte === 0xff) return "ff";
-  if (isPrintableAsciiByte(byte)) return "printable";
-  if (byte < 0x20 || byte === 0x7f) return "control";
-  if (byte >= 0x80) return "high";
-  return "default";
-}
-
-function getHexToneClass(tone: ByteTone): string {
-  switch (tone) {
-    case "magic":
-      return "bg-[color:color-mix(in_srgb,var(--accent)_16%,transparent)] text-[var(--accent)] font-semibold rounded";
-    case "string":
-      return "bg-emerald-500/10 text-emerald-300";
-    case "zero-run":
-      return "bg-sky-500/10 text-sky-300";
-    case "ff-run":
-      return "bg-amber-500/10 text-amber-300";
-    case "zero":
-      return "text-sky-300/70";
-    case "ff":
-      return "text-amber-300/75";
-    case "control":
-      return "text-rose-300/85";
-    case "high":
-      return "text-fuchsia-300/85";
-    case "printable":
-      return "text-[var(--text-primary)]";
-    default:
-      return "text-[var(--text-primary)]";
-  }
-}
-
-function getAsciiToneClass(tone: ByteTone): string {
-  switch (tone) {
-    case "magic":
-      return "rounded bg-[color:color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)]";
-    case "string":
-      return "text-emerald-300";
-    case "zero-run":
-      return "text-sky-300";
-    case "ff-run":
-      return "text-amber-300";
-    case "zero":
-      return "text-sky-300/70";
-    case "ff":
-      return "text-amber-300/75";
-    case "control":
-      return "text-rose-300/80";
-    case "high":
-      return "text-fuchsia-300/85";
-    case "printable":
-      return "text-[var(--text-secondary)]";
-    default:
-      return "text-[var(--text-secondary)]";
-  }
-}
-
-function getLegendToneClass(tone: ByteTone): string {
-  switch (tone) {
-    case "magic":
-      return "bg-[var(--accent)]";
-    case "string":
-      return "bg-emerald-300";
-    case "zero-run":
-      return "bg-sky-300";
-    case "ff-run":
-      return "bg-amber-300";
-    case "control":
-      return "bg-rose-300";
-    case "high":
-      return "bg-fuchsia-300";
-    default:
-      return "bg-[var(--text-secondary)]";
-  }
-}
-
-function formatByteCount(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-const hexViewerStyles = /* css */ `
-.hex-table {
-  font-family: "SF Mono", "JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace;
-  font-size: 12px;
-  line-height: 1.4;
-}
-.hex-cell {
-  white-space: pre;
-  user-select: text;
-}
-.hex-offset {
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-.hex-byte {
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-.hex-ascii {
-  color: var(--text-secondary);
-  letter-spacing: 0.5px;
-}
-.hex-jump-input {
-  font-family: "SF Mono", "JetBrains Mono", "Fira Code", Menlo, monospace;
-}
-`;

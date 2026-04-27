@@ -35,7 +35,7 @@ export interface AudioPlayerMediaSession {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-interface AudioPlayerProps {
+export interface AudioPlayerProps {
   src: string;
   fileName: string;
   /** Unique ID for media session registration (e.g. window ID). */

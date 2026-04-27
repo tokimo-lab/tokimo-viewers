@@ -1,14 +1,11 @@
 /**
  * MonacoTextEditor — VS Code editor component.
  *
- * Pure UI component. No side-effect imports, no API calls.
- * Caller provides fetchContent / saveContent callbacks.
- *
- * IMPORTANT: Monaco must be configured (workers, loader, themes) by the
- * host application BEFORE this component is mounted — import the setup
- * side-effects there.
+ * Pure UI component. No API calls.
+ * Caller provides content or fetchContent / saveContent callbacks.
  */
 
+import "./monaco-setup";
 import type { OnMount } from "@monaco-editor/react";
 import { Button } from "@tokimo/ui";
 import { Save } from "lucide-react";
@@ -80,25 +77,29 @@ function getLanguage(fileName: string): string {
 /* ── Props ─────────────────────────────────────────── */
 
 export interface MonacoTextEditorProps {
-  fileName: string;
-  fetchContent: () => Promise<string>;
+  fileName?: string;
+  content?: string;
+  fetchContent?: () => Promise<string>;
   saveContent?: (content: string) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
   /** When true, shows no save button and editor is read-only */
   readOnly?: boolean;
   /** Override detected language */
   language?: string;
+  className?: string;
 }
 
 /* ── Component ─────────────────────────────────────── */
 
 export function MonacoTextEditor({
-  fileName,
+  fileName = "untitled.txt",
+  content,
   fetchContent,
   saveContent,
   onDirtyChange,
   readOnly = false,
   language: languageOverride,
+  className,
 }: MonacoTextEditorProps) {
   const [initialContent, setInitialContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -113,18 +114,18 @@ export function MonacoTextEditor({
   const onDirtyChangeRef = useRef(onDirtyChange);
   onDirtyChangeRef.current = onDirtyChange;
 
-  // Track fetchContent identity to re-fetch when it changes
   const fetchContentRef = useRef(fetchContent);
   fetchContentRef.current = fetchContent;
 
-  // Re-fetch when fileName changes (signals a different file)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fileName change = new file
+  // Re-load when fileName/content changes (signals a different document)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fileName/content change = new document
   useEffect(() => {
     setLoading(true);
     setError(null);
     setDirty(false);
-    fetchContentRef
-      .current()
+    const loadContent =
+      fetchContentRef.current ?? (() => Promise.resolve(content ?? ""));
+    loadContent()
       .then((text) => {
         setInitialContent(text);
         originalRef.current = text;
@@ -135,7 +136,7 @@ export function MonacoTextEditor({
         setError(err instanceof Error ? err.message : String(err));
         setLoading(false);
       });
-  }, [fileName]);
+  }, [fileName, content]);
 
   const getEditorContent = useCallback((): string => {
     return editorInstanceRef.current?.getValue() ?? originalRef.current;
@@ -150,6 +151,9 @@ export function MonacoTextEditor({
         originalRef.current = content;
         setDirty(false);
         onDirtyChangeRef.current?.(false);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => setSaving(false));
   }, [saving, saveContent, getEditorContent]);
@@ -175,7 +179,9 @@ export function MonacoTextEditor({
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-[var(--text-tertiary)]">
+      <div
+        className={`flex h-full items-center justify-center text-sm text-[var(--text-tertiary)] ${className ?? ""}`}
+      >
         Loading…
       </div>
     );
@@ -183,7 +189,9 @@ export function MonacoTextEditor({
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-red-500">
+      <div
+        className={`flex h-full items-center justify-center text-sm text-red-500 ${className ?? ""}`}
+      >
         {error}
       </div>
     );
@@ -195,7 +203,7 @@ export function MonacoTextEditor({
     document.documentElement.classList.contains("dark");
 
   return (
-    <div className="flex h-full flex-col">
+    <div className={`flex h-full flex-col ${className ?? ""}`}>
       {!readOnly && (
         <div className="flex shrink-0 items-center justify-between border-b border-black/[0.06] px-3 py-1 dark:border-white/[0.08]">
           <span className="text-xs text-[var(--text-quaternary)]">{lang}</span>

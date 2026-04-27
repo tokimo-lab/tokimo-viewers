@@ -5,6 +5,7 @@
  *  - `fileUrl`   — URL to fetch the ebook binary.
  *  - `isMobi`    — true for MOBI/AZW3 files (vs EPUB).
  *  - `parseBook` — async function that parses an ArrayBuffer into an EpubBook.
+ *  - `fetchBook` — optional host fetcher for auth/header glue.
  *  - `isActive`  — when true, enables keyboard (Arrow left/right) navigation.
  */
 
@@ -18,158 +19,33 @@ import {
   Plus,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { EpubTocTree } from "./EpubTocTree";
+import { buildReaderCSS, READER_THEMES } from "./epub-reader-theme";
+import { startScrollTracking } from "./epub-reader-toc";
+import type {
+  EpubBook,
+  EpubTocItem,
+  EpubViewerProps,
+  ReaderTheme,
+} from "./epub-reader-types";
 
-/* ── Public types (re-exported for callers to build parsers) ─────────────── */
+export type {
+  EpubBook,
+  EpubSpineItem,
+  EpubTocItem,
+  EpubViewerProps,
+} from "./epub-reader-types";
 
-export interface EpubTocItem {
-  id: string;
-  label: string;
-  href: string;
-  children: EpubTocItem[];
-}
-
-export interface EpubSpineItem {
-  id: string;
-  href: string;
-  mediaType: string;
-}
-
-export interface EpubBook {
-  spine: EpubSpineItem[];
-  toc: EpubTocItem[];
-  getChapterHtml: (index: number) => Promise<string>;
-  destroy: () => void;
-}
-
-export interface EpubViewerProps {
-  fileUrl: string;
-  isMobi?: boolean;
-  parseBook: (buf: ArrayBuffer) => Promise<EpubBook>;
-  /** When true, Arrow Left/Right navigate chapters. */
-  isActive?: boolean;
-}
-
-/* ── Reader theme presets ────────────────────────────────────────────────── */
-
-interface ReaderTheme {
-  label: string;
-  bg: string;
-  text: string;
-  swatch: string;
-}
-
-const READER_THEMES: ReaderTheme[] = [
-  { label: "Light", bg: "#ffffff", text: "#1a1a1a", swatch: "#ffffff" },
-  { label: "Warm", bg: "#f8f1e3", text: "#3b2e1a", swatch: "#f8f1e3" },
-  { label: "Green", bg: "#e0eee0", text: "#2a3a2a", swatch: "#e0eee0" },
-  { label: "Dark", bg: "#1a1a1a", text: "#d4d4d4", swatch: "#1a1a1a" },
-];
-
-const SCROLLBAR_CSS = `
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-button,
-  ::-webkit-scrollbar-button:hover,
-  ::-webkit-scrollbar-button:active {
-    width: 0;
-    height: 0;
-    background: transparent;
-    background-image: none;
-    border: none;
-    box-shadow: none;
-  }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-track-piece { background: transparent; background-image: none; }
-  ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.24); border-radius: 999px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.16); }
-  ::-webkit-scrollbar-corner { background: transparent; }
-  * { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.24) transparent; }
-`;
-
-function buildReaderCSS(fontSizePct: number, theme: ReaderTheme): string {
-  return `
-    :host {
-      display: block;
-      overflow: auto;
-      height: 100%;
-      background: ${theme.bg};
-    }
-    .reader-body {
-      margin: 0;
-      padding: 16px 24px;
-      font-family: "Noto Serif", "Source Han Serif", Georgia, serif;
-      font-size: ${fontSizePct}%;
-      line-height: 1.8;
-      color: ${theme.text};
-      word-wrap: break-word;
-      overflow-wrap: break-word;
-    }
-    .reader-body img, .reader-body svg { max-width: 100%; height: auto; }
-    .reader-body a { color: #2563eb; }
-    .reader-body pre, .reader-body code { white-space: pre-wrap; word-break: break-all; }
-    .reader-body table { border-collapse: collapse; max-width: 100%; }
-    .reader-body td, .reader-body th { border: 1px solid #ddd; padding: 4px 8px; }
-    ${SCROLLBAR_CSS}
-  `;
-}
-
-function collectTocFragments(
-  items: EpubTocItem[],
-  chapterHref: string,
-): { href: string; fragment: string }[] {
-  const result: { href: string; fragment: string }[] = [];
-  for (const item of items) {
-    const hashIdx = item.href.indexOf("#");
-    const base = hashIdx >= 0 ? item.href.substring(0, hashIdx) : item.href;
-    const fragment = hashIdx >= 0 ? item.href.substring(hashIdx + 1) : "";
-    if (base === chapterHref) {
-      result.push({ href: item.href, fragment });
-    }
-    result.push(...collectTocFragments(item.children, chapterHref));
-  }
-  return result;
-}
-
-function startScrollTracking(
-  tocItems: EpubTocItem[],
-  spineHref: string,
-  host: HTMLDivElement,
-  shadow: ShadowRoot,
-  onActiveChange: (href: string) => void,
-  cleanupRef: React.MutableRefObject<(() => void) | null>,
-): void {
-  cleanupRef.current?.();
-  cleanupRef.current = null;
-
-  const entries = collectTocFragments(tocItems, spineHref);
-
-  if (entries.length === 0) {
-    onActiveChange(spineHref);
-    return;
-  }
-
-  const updateActive = () => {
-    let current = entries[0]?.href ?? spineHref;
-    for (const entry of entries) {
-      if (!entry.fragment) continue;
-      const el = shadow.querySelector<HTMLElement>(
-        `[id="${CSS.escape(entry.fragment)}"]`,
-      );
-      if (el && el.getBoundingClientRect().top <= 30) {
-        current = entry.href;
-      }
-    }
-    onActiveChange(current);
-  };
-
-  updateActive();
-  host.addEventListener("scroll", updateActive, { passive: true });
-  cleanupRef.current = () => host.removeEventListener("scroll", updateActive);
+async function fetchEbookBinary(fileUrl: string): Promise<ArrayBuffer> {
+  const res = await fetch(fileUrl);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.arrayBuffer();
 }
 
 export function EpubViewer({
   fileUrl,
-  isMobi = false,
   parseBook,
+  fetchBook,
   isActive = false,
 }: EpubViewerProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -216,16 +92,13 @@ export function EpubViewer({
 
   /* ── Load ebook ─────────────────────────────────── */
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: parseBook is a stable callback
   useEffect(() => {
     if (!fileUrl) return;
     let destroyed = false;
 
     (async () => {
       try {
-        const res = await fetch(fileUrl, { credentials: "include" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const buf = await res.arrayBuffer();
+        const buf = await (fetchBook ?? fetchEbookBinary)(fileUrl);
         if (destroyed) return;
 
         const book = await parseBook(buf);
@@ -260,6 +133,7 @@ export function EpubViewer({
         }
         if (!destroyed) setLoading(false);
       } catch (err) {
+        console.error("[EpubViewer] Failed to load ebook:", err);
         if (!destroyed) {
           setError(err instanceof Error ? err.message : "Failed to load ebook");
           setLoading(false);
@@ -275,7 +149,7 @@ export function EpubViewer({
         bookRef.current = null;
       }
     };
-  }, [fileUrl, isMobi, parseBook]);
+  }, [fileUrl, fetchBook, parseBook]);
 
   /* ── Update styles on theme / font change ────────── */
 
@@ -506,7 +380,7 @@ export function EpubViewer({
               direction="vertical"
               innerClassName="p-2"
             >
-              <TocTree
+              <EpubTocTree
                 items={toc}
                 activeHref={activeHref}
                 onSelect={goToHref}
@@ -526,49 +400,5 @@ export function EpubViewer({
         </div>
       )}
     </div>
-  );
-}
-
-/* ── TOC Tree ─────────────────────────────────────── */
-
-function TocTree({
-  items,
-  activeHref,
-  onSelect,
-}: {
-  items: EpubTocItem[];
-  activeHref?: string;
-  onSelect: (href: string) => void;
-}) {
-  return (
-    <ul className="m-0 list-none space-y-0.5 pl-0">
-      {items.map((item) => {
-        const isActive = activeHref === item.href;
-        return (
-          <li key={item.id}>
-            <button
-              type="button"
-              onClick={() => onSelect(item.href)}
-              className={`w-full cursor-pointer truncate rounded px-1.5 py-0.5 text-left transition-colors hover:bg-[var(--accent-subtle)] hover:text-[var(--text-primary)] ${
-                isActive
-                  ? "bg-[var(--accent-subtle)] text-[var(--accent)]"
-                  : "text-[var(--text-secondary)]"
-              }`}
-            >
-              {item.label}
-            </button>
-            {item.children.length > 0 && (
-              <div className="pl-3">
-                <TocTree
-                  items={item.children}
-                  activeHref={activeHref}
-                  onSelect={onSelect}
-                />
-              </div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
   );
 }

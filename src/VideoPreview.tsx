@@ -5,7 +5,7 @@
  * position saving and sibling navigation, use VideoViewer instead.
  */
 
-interface VideoPreviewProps {
+export interface VideoPreviewProps {
   src: string;
   className?: string;
 }

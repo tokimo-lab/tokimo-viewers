@@ -19,7 +19,7 @@ const preventDrag = (e: React.SyntheticEvent) => e.preventDefault();
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-interface ImagePreviewProps {
+export interface ImagePreviewProps {
   src: string;
   alt?: string;
   /** Show bottom toolbar with zoom/rotate controls. Default true. */

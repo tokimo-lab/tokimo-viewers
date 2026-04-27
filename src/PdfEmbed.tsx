@@ -45,7 +45,7 @@ function getPdfjs() {
 // ---------------------------------------------------------------------------
 export type PdfViewMode = "scroll" | "single" | "tile";
 
-interface PdfEmbedProps {
+export interface PdfEmbedProps {
   src: string;
   title?: string;
   className?: string;
@@ -457,8 +457,8 @@ function PdfPage({
           .then(() => {
             renderedWidthRef.current = desiredWidth;
           })
-          .catch(() => {
-            // cancelled or failed
+          .catch((err: unknown) => {
+            console.warn("[PdfEmbed] Page render cancelled or failed:", err);
           });
       });
 

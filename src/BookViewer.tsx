@@ -22,281 +22,21 @@ import {
   Sun,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BookSettingsPanel } from "./BookSettingsPanel";
+import type { ReaderSettings, ReaderTheme } from "./book-reader-settings";
+import {
+  FONT_FAMILIES,
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  FONT_SIZE_STEP,
+  loadSettings,
+  saveSettings,
+  THEME_MAP,
+} from "./book-reader-settings";
+import type { BookChapterContent, BookViewerProps } from "./book-reader-types";
+import { ReadingProgressBar } from "./ReadingProgressBar";
 
-/* ── Public types ─────────────────────────────────── */
-
-export interface BookChapterContent {
-  id: string;
-  title: string | null;
-  chapterNumber: number;
-  content: string;
-  prevChapterId: string | null;
-  nextChapterId: string | null;
-  bookTitle: string;
-  volumeTitle: string | null;
-}
-
-export interface BookViewerProps {
-  bookId?: string;
-  initialChapterId?: string;
-  /** Window route string — if it starts with "/chapters/:id", that ID takes precedence. */
-  route?: string;
-  fetchChapter: (
-    bookId: string,
-    chapterId: string,
-  ) => Promise<BookChapterContent | null>;
-  /** When true, Arrow Left/Right navigate chapters. */
-  isActive?: boolean;
-}
-
-/* ── Theme definitions ─────────────────────────────── */
-
-const THEME_MAP = {
-  light: {
-    bg: "#fefefe",
-    text: "#333333",
-    secondaryBg: "#f5f5f5",
-    accent: "#e5e5e5",
-  },
-  dark: {
-    bg: "#1a1a2e",
-    text: "#d4d4d8",
-    secondaryBg: "#16213e",
-    accent: "#2a2a4e",
-  },
-  sepia: {
-    bg: "#f4ecd8",
-    text: "#5b4636",
-    secondaryBg: "#e8dcc8",
-    accent: "#d4c4a8",
-  },
-} as const;
-
-type ReaderTheme = keyof typeof THEME_MAP;
-
-const FONT_SIZE_MIN = 14;
-const FONT_SIZE_MAX = 24;
-const FONT_SIZE_STEP = 2;
-
-const FONT_FAMILIES = {
-  serif:
-    '"Noto Serif SC", "Source Han Serif SC", "Source Han Serif", "SimSun", "STSong", serif',
-  "sans-serif":
-    '"Noto Sans SC", "Source Han Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
-  monospace: '"JetBrains Mono", "Fira Code", "Source Code Pro", monospace',
-} as const;
-
-type FontFamilyKey = keyof typeof FONT_FAMILIES;
-
-const FONT_FAMILY_LABELS: Record<FontFamilyKey, string> = {
-  serif: "衬线体",
-  "sans-serif": "无衬线体",
-  monospace: "等宽体",
-};
-
-const STORAGE_KEY = "book-reader-settings";
-
-interface ReaderSettings {
-  fontSize: number;
-  fontFamily: FontFamilyKey;
-  fontWeight: "normal" | "bold";
-  theme: ReaderTheme;
-}
-
-function defaultSettings(): ReaderSettings {
-  return {
-    fontSize: 18,
-    fontFamily: "serif",
-    fontWeight: "normal",
-    theme: "light",
-  };
-}
-
-function loadSettings(): ReaderSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...defaultSettings(), ...JSON.parse(raw) };
-  } catch {
-    // ignore
-  }
-  return defaultSettings();
-}
-
-function saveSettings(s: ReaderSettings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-}
-
-/* ── Reading Progress Bar ──────────────────────────── */
-
-function ReadingProgressBar({
-  color,
-  containerRef,
-}: {
-  color: string;
-  containerRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  const [progress, setProgress] = useState(0);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const handleScroll = () => {
-      const scrollTop = el.scrollTop;
-      const scrollHeight = el.scrollHeight - el.clientHeight;
-      if (scrollHeight <= 0) {
-        setProgress(100);
-        return;
-      }
-      setProgress(Math.min(100, (scrollTop / scrollHeight) * 100));
-    };
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll();
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [containerRef]);
-
-  return (
-    <div className="absolute top-0 right-0 left-0 z-10 h-[3px]">
-      <div
-        className="h-full transition-[width] duration-150"
-        style={{ width: `${progress}%`, backgroundColor: color }}
-      />
-    </div>
-  );
-}
-
-/* ── Settings Panel ──────────────────────────────────── */
-
-function SettingsPanel({
-  settings,
-  onUpdate,
-  themeColors,
-}: {
-  settings: ReaderSettings;
-  onUpdate: (patch: Partial<ReaderSettings>) => void;
-  themeColors: (typeof THEME_MAP)[ReaderTheme];
-}) {
-  return (
-    <div
-      className="absolute right-4 bottom-16 z-20 w-56 rounded-xl p-4 shadow-xl backdrop-blur-md"
-      style={{
-        backgroundColor: `${themeColors.secondaryBg}f0`,
-        color: themeColors.text,
-      }}
-    >
-      {/* Font size */}
-      <div className="mb-3">
-        <p className="mb-1.5 text-xs opacity-60">字体大小</p>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:opacity-70 disabled:opacity-30"
-            style={{ backgroundColor: themeColors.accent }}
-            disabled={settings.fontSize <= FONT_SIZE_MIN}
-            onClick={() =>
-              onUpdate({
-                fontSize: Math.max(
-                  FONT_SIZE_MIN,
-                  settings.fontSize - FONT_SIZE_STEP,
-                ),
-              })
-            }
-          >
-            <Minus size={14} />
-          </button>
-          <span className="flex-1 text-center text-sm">
-            {settings.fontSize}px
-          </span>
-          <button
-            type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:opacity-70 disabled:opacity-30"
-            style={{ backgroundColor: themeColors.accent }}
-            disabled={settings.fontSize >= FONT_SIZE_MAX}
-            onClick={() =>
-              onUpdate({
-                fontSize: Math.min(
-                  FONT_SIZE_MAX,
-                  settings.fontSize + FONT_SIZE_STEP,
-                ),
-              })
-            }
-          >
-            <Plus size={14} />
-          </button>
-        </div>
-      </div>
-
-      {/* Font family */}
-      <div className="mb-3">
-        <p className="mb-1.5 text-xs opacity-60">字体</p>
-        <div className="flex gap-1">
-          {(Object.keys(FONT_FAMILIES) as FontFamilyKey[]).map((key) => (
-            <button
-              key={key}
-              type="button"
-              className="flex-1 rounded-md px-1.5 py-1 text-xs transition-colors"
-              style={{
-                backgroundColor:
-                  settings.fontFamily === key
-                    ? themeColors.accent
-                    : "transparent",
-                opacity: settings.fontFamily === key ? 1 : 0.6,
-              }}
-              onClick={() => onUpdate({ fontFamily: key })}
-            >
-              {FONT_FAMILY_LABELS[key]}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Font weight */}
-      <div className="mb-3">
-        <p className="mb-1.5 text-xs opacity-60">字重</p>
-        <div className="flex gap-1">
-          {(["normal", "bold"] as const).map((w) => (
-            <button
-              key={w}
-              type="button"
-              className="flex-1 rounded-md px-2 py-1 text-xs transition-colors"
-              style={{
-                backgroundColor:
-                  settings.fontWeight === w
-                    ? themeColors.accent
-                    : "transparent",
-                opacity: settings.fontWeight === w ? 1 : 0.6,
-                fontWeight: w,
-              }}
-              onClick={() => onUpdate({ fontWeight: w })}
-            >
-              {w === "normal" ? "正常" : "加粗"}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Background theme */}
-      <div>
-        <p className="mb-1.5 text-xs opacity-60">背景</p>
-        <div className="flex items-center gap-2">
-          {(["light", "dark", "sepia"] as ReaderTheme[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              className="h-7 w-7 rounded-full border-2 transition-all"
-              style={{
-                backgroundColor: THEME_MAP[t].bg,
-                borderColor:
-                  settings.theme === t ? themeColors.text : "transparent",
-              }}
-              onClick={() => onUpdate({ theme: t })}
-              title={t === "light" ? "白色" : t === "dark" ? "暗色" : "护眼"}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+export type { BookChapterContent, BookViewerProps } from "./book-reader-types";
 
 /* ── Main Component ─────────────────────────────────── */
 
@@ -338,7 +78,10 @@ export function BookViewer({
         setChapter(ch ?? null);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((err: unknown) => {
+        console.error("[BookViewer] Failed to fetch chapter:", err);
+        setLoading(false);
+      });
   }, [bookId, currentChapterId, fetchChapter]);
 
   // Split content into paragraphs
@@ -602,7 +345,7 @@ export function BookViewer({
       </div>
 
       {showSettings && (
-        <SettingsPanel
+        <BookSettingsPanel
           settings={settings}
           onUpdate={updateSettings}
           themeColors={themeColors}
