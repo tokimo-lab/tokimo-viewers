@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout @tokimo/ui
+        uses: actions/checkout@v4
+        with:
+          repository: tokimo-lab/tokimo-ui
+          path: tokimo-ui
+
+      - name: Create temporary pnpm workspace
+        run: |
+          echo 'packages:' > pnpm-workspace.yaml
+          echo '  - "."' >> pnpm-workspace.yaml
+          echo '  - "tokimo-ui"' >> pnpm-workspace.yaml
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm typecheck
+      - run: pnpm lint
