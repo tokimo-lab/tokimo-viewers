@@ -54,7 +54,11 @@ export function HexViewer({ fileUrl, fileName, fetchRange }: HexViewerProps) {
 
       const resp = fetchRange
         ? await fetchRange(fileUrl, range, signal)
-        : await fetch(fileUrl, { headers: { Range: range }, signal });
+        : await fetch(fileUrl, {
+            headers: { Range: range },
+            credentials: "include",
+            signal,
+          });
 
       if (!resp.ok) {
         throw new Error(`HTTP ${resp.status}`);

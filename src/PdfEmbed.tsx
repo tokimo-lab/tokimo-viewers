@@ -137,7 +137,7 @@ export function PdfEmbed({
     getPdfjs()
       .then((pdfjsLib) => {
         if (cancelled) return;
-        loadingTask = pdfjsLib.getDocument(src);
+        loadingTask = pdfjsLib.getDocument({ url: src, withCredentials: true });
         return loadingTask.promise;
       })
       .then((doc) => {

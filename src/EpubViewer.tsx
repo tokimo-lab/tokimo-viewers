@@ -37,7 +37,7 @@ export type {
 } from "./epub-reader-types";
 
 async function fetchEbookBinary(fileUrl: string): Promise<ArrayBuffer> {
-  const res = await fetch(fileUrl);
+  const res = await fetch(fileUrl, { credentials: "include" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.arrayBuffer();
 }
