@@ -7,8 +7,8 @@
 
 import "./monaco-setup";
 import type { OnMount } from "@monaco-editor/react";
-import { Button, Markdown } from "@tokimo/ui";
-import { Save } from "lucide-react";
+import { Button, Markdown, SegmentedControl } from "@tokimo/ui";
+import { Code, Columns, Eye, Save } from "lucide-react";
 import * as monaco from "monaco-editor";
 import {
   lazy,
@@ -160,6 +160,8 @@ function buildAnchors(previewEl: HTMLElement, lastLineOfDoc: number): Anchor[] {
 
 /* ── Props ─────────────────────────────────────────── */
 
+export type MonacoViewMode = "code" | "split" | "preview";
+
 export interface MonacoTextEditorProps {
   fileName?: string;
   content?: string;
@@ -171,6 +173,18 @@ export interface MonacoTextEditorProps {
   /** Override detected language */
   language?: string;
   className?: string;
+  /**
+   * View mode for markdown documents.
+   * - `code`: editor only (full width)
+   * - `split`: editor + preview side-by-side (default)
+   * - `preview`: preview only (full width)
+   *
+   * Ignored for non-markdown languages. When omitted, defaults to `preview`
+   * in read-only mode (attachments etc.) and `split` otherwise.
+   */
+  viewMode?: MonacoViewMode;
+  /** Notifies the host when the user picks a different view mode. */
+  onViewModeChange?: (mode: MonacoViewMode) => void;
 }
 
 /* ── Component ─────────────────────────────────────── */
@@ -184,6 +198,8 @@ export function MonacoTextEditor({
   readOnly = false,
   language: languageOverride,
   className,
+  viewMode,
+  onViewModeChange,
 }: MonacoTextEditorProps) {
   const [initialContent, setInitialContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -469,6 +485,12 @@ export function MonacoTextEditor({
     typeof window !== "undefined" &&
     document.documentElement.classList.contains("dark");
   const isMarkdown = lang === "markdown";
+  const effectiveMode: MonacoViewMode =
+    viewMode ?? (readOnly && isMarkdown ? "preview" : "split");
+  const showSwitcher = isMarkdown && !readOnly;
+  const showEditor = !isMarkdown || effectiveMode !== "preview";
+  const showPreview = isMarkdown && effectiveMode !== "code";
+  const showSplit = isMarkdown && effectiveMode === "split";
 
   const editorPane = (
     <Suspense
@@ -505,6 +527,43 @@ export function MonacoTextEditor({
       {!readOnly && (
         <div className="flex shrink-0 items-center justify-between border-b border-black/[0.06] px-3 py-1 dark:border-white/[0.08]">
           <span className="text-xs text-[var(--text-quaternary)]">{lang}</span>
+          {showSwitcher ? (
+            <SegmentedControl<MonacoViewMode>
+              value={effectiveMode}
+              onChange={(v) => onViewModeChange?.(v)}
+              options={[
+                {
+                  value: "code",
+                  label: (
+                    <span className="inline-flex items-center gap-1">
+                      <Code size={12} />
+                      Code
+                    </span>
+                  ),
+                },
+                {
+                  value: "split",
+                  label: (
+                    <span className="inline-flex items-center gap-1">
+                      <Columns size={12} />
+                      Split
+                    </span>
+                  ),
+                },
+                {
+                  value: "preview",
+                  label: (
+                    <span className="inline-flex items-center gap-1">
+                      <Eye size={12} />
+                      Preview
+                    </span>
+                  ),
+                },
+              ]}
+            />
+          ) : (
+            <span />
+          )}
           <div className="flex items-center gap-2">
             {dirty && (
               <span className="text-xs text-[var(--text-quaternary)]">
@@ -531,22 +590,31 @@ export function MonacoTextEditor({
             dragging ? "select-none" : ""
           }`}
         >
-          <div style={{ width: `${leftPct}%` }} className="min-w-0">
-            {editorPane}
-          </div>
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only splitter has no semantic role */}
-          <div
-            onMouseDown={handleSplitterMouseDown}
-            className="w-[3px] shrink-0 cursor-col-resize bg-black/[0.06] hover:bg-blue-500/40 dark:bg-white/[0.08]"
-          />
-          <div
-            ref={previewRef}
-            onScroll={handlePreviewScroll}
-            style={{ width: `${100 - leftPct}%` }}
-            className="min-w-0 overflow-y-auto px-4 py-3"
-          >
-            <Markdown content={liveContent} />
-          </div>
+          {showEditor && (
+            <div
+              style={{ width: showSplit ? `${leftPct}%` : "100%" }}
+              className="min-w-0"
+            >
+              {editorPane}
+            </div>
+          )}
+          {showSplit && (
+            // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only splitter has no semantic role
+            <div
+              onMouseDown={handleSplitterMouseDown}
+              className="w-[3px] shrink-0 cursor-col-resize bg-black/[0.06] hover:bg-blue-500/40 dark:bg-white/[0.08]"
+            />
+          )}
+          {showPreview && (
+            <div
+              ref={previewRef}
+              onScroll={handlePreviewScroll}
+              style={{ width: showSplit ? `${100 - leftPct}%` : "100%" }}
+              className="min-w-0 overflow-y-auto px-4 py-3"
+            >
+              <Markdown content={liveContent} />
+            </div>
+          )}
         </div>
       ) : (
         <div className="min-h-0 flex-1">{editorPane}</div>

@@ -19,7 +19,10 @@ export type { HtmlPreviewProps } from "./HtmlPreview";
 export { HtmlPreview } from "./HtmlPreview";
 export type { ImagePreviewProps } from "./ImagePreview";
 export { ImagePreview, ToolBtn } from "./ImagePreview";
-export type { MonacoTextEditorProps } from "./MonacoTextEditor";
+export type {
+  MonacoTextEditorProps,
+  MonacoViewMode,
+} from "./MonacoTextEditor";
 export { MonacoTextEditor } from "./MonacoTextEditor";
 export type { PdfEmbedProps, PdfViewMode } from "./PdfEmbed";
 export { PdfEmbed } from "./PdfEmbed";
