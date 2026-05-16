@@ -236,6 +236,25 @@ export function MonacoTextEditor({
   const fetchContentRef = useRef(fetchContent);
   fetchContentRef.current = fetchContent;
 
+  /** Mark anchors dirty whenever preview resizes (window resize / splitter
+   * drag / parent layout change). Top offsets of `[data-source-line]`
+   * elements depend on wrap width, so resize invalidates the cache. */
+  const previewObserverRef = useRef<ResizeObserver | null>(null);
+  const setPreviewEl = useCallback((el: HTMLDivElement | null) => {
+    previewRef.current = el;
+    previewObserverRef.current?.disconnect();
+    if (el) {
+      const ro = new ResizeObserver(() => {
+        anchorsDirtyRef.current = true;
+      });
+      ro.observe(el);
+      previewObserverRef.current = ro;
+    } else {
+      previewObserverRef.current = null;
+    }
+  }, []);
+  useEffect(() => () => previewObserverRef.current?.disconnect(), []);
+
   // Re-load when fileName/content changes (signals a different document)
   // biome-ignore lint/correctness/useExhaustiveDependencies: fileName/content change = new document
   useEffect(() => {
@@ -607,7 +626,7 @@ export function MonacoTextEditor({
           )}
           {showPreview && (
             <div
-              ref={previewRef}
+              ref={setPreviewEl}
               onScroll={handlePreviewScroll}
               style={{ width: showSplit ? `${100 - leftPct}%` : "100%" }}
               className="min-w-0 overflow-y-auto px-4 py-3"
